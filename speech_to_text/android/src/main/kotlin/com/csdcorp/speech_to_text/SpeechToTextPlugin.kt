@@ -114,6 +114,17 @@ public class SpeechToTextPlugin :
     private var alwaysUseStop: Boolean = false
     private var intentLookup: Boolean = false
     private var noBluetoothOpt: Boolean = false // user-defined option
+    // SLICK fork. Android's RecognizerIntent masks profanity by DEFAULT
+    // (EXTRA_MASK_OFFENSIVE_WORDS defaults true), which silently asterisks
+    // exactly the emotionally-loaded sentences a dictation intake exists to
+    // capture. Opt-out only, so upstream behaviour is unchanged unless asked.
+    private var noOffensiveMaskingOpt: Boolean = false // user-defined option
+    // SLICK fork. `autoPunctuation` is a per-listen option that the Dart side
+    // has always sent and the Swift side has always honoured; only Android
+    // dropped it on the floor. Held as a field rather than threaded through
+    // startListening/createRecognizer so the fork does not change any method
+    // signature, which is what keeps rebasing onto upstream cheap.
+    private var autoPunctuationOpt: Boolean = false
     private var bluetoothDisabled = true // final bluetooth state (combines user-defined option and permissions)
     private var resultSent: Boolean = false
     private var lastOnDevice: Boolean = false
@@ -189,6 +200,10 @@ public class SpeechToTextPlugin :
                     if (null != iOpt) {
                         intentLookup = iOpt == true
                     }
+                    var noMaskOpt = call.argument<Boolean>("noOffensiveMasking")
+                    if (null != noMaskOpt) {
+                        noOffensiveMaskingOpt = noMaskOpt == true
+                    }
                     var noBtOpt = call.argument<Boolean>("noBluetooth")
                     if (null != noBtOpt) {
                         noBluetoothOpt = noBtOpt == true
@@ -201,6 +216,7 @@ public class SpeechToTextPlugin :
                         localeId = defaultLanguageTag
                     }
                     localeId = localeId.replace( '_', '-')
+                    autoPunctuationOpt = call.argument<Boolean>("autoPunctuation") == true
                     var partialResults = call.argument<Boolean>("partialResults")
                     if (null == partialResults) {
                         partialResults = true
@@ -688,6 +704,31 @@ public class SpeechToTextPlugin :
                             putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, onDevice );
                         }
                         putExtra(RecognizerIntent.EXTRA_MAX_RESULTS,10)
+
+                        // SLICK fork: two Android-only extras the upstream
+                        // plugin never sets. Both are API 33+; below that
+                        // there is no way to influence either behaviour.
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            // The Dart side already sends `autoPunctuation`
+                            // and the Swift side already honours it; only
+                            // Android dropped it, so iOS shipped punctuated
+                            // transcripts and Android did not.
+                            //
+                            // NOTE for the reader: with formatting enabled the
+                            // results list carries TWO hypotheses — formatted
+                            // first, then raw — so anything that picks a
+                            // result by score rather than by position will
+                            // select the unformatted one.
+                            if (autoPunctuationOpt) {
+                                putExtra(
+                                    RecognizerIntent.EXTRA_ENABLE_FORMATTING,
+                                    RecognizerIntent.FORMATTING_OPTIMIZE_QUALITY
+                                )
+                            }
+                            if (noOffensiveMaskingOpt) {
+                                putExtra(RecognizerIntent.EXTRA_MASK_OFFENSIVE_WORDS, false)
+                            }
+                        }
 
                         pauseFor?.also {
                             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, it)
